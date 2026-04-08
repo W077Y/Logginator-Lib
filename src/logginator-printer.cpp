@@ -502,10 +502,10 @@ namespace logginator
     this->m_pos = ret.ptr;
   }
 
-  void Printer_Base::add(unsigned long long int const& value, column_description_int::Format description)
+  void Printer_Base::add(unsigned long long int const& value, column_description_int::Format format)
   {
     char tmp[50] = {};
-    auto ret     = append_int_ascii(tmp, tmp + sizeof(tmp), value);
+    auto ret     = append_int(tmp, tmp + sizeof(tmp), value, format);
     if (ret.ec != std::errc())
     {
       throw std::exception();
@@ -550,7 +550,7 @@ namespace logginator
     return this->add(std::span<std::byte const>{ &value, 1 }, format);
   }
 
-  void Printer_Base::add(std::span<std::byte const> value, column_description_binary::Format format)
+  void Printer_Base::add(std::span<std::byte const> value, column_description_binary::Format)
   {
     auto ret = append(this->m_pos, this->m_buffer_end, value);
     if (ret.ec != std::errc())
@@ -567,7 +567,7 @@ namespace logginator
     this->m_pos = ret.ptr;
   }
 
-  void Printer_Base::add(std::string_view value, column_description_string::Format format)
+  void Printer_Base::add(std::string_view value, column_description_string::Format)
   {
     auto ret = append_column(this->m_pos, this->m_buffer_end, value, 0);
     if (ret.ec != std::errc())

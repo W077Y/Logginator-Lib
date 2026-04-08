@@ -179,7 +179,7 @@ namespace logginator
 
   template <typename T, typename D>
   concept is_supported_by_Printer_Interface = requires(T const& val, D const& des) {
-    std::same_as<decltype(des.get_format()), typename D::Format>;
+    requires std::same_as<decltype(des.get_format()), typename D::Format>;
     std::declval<Printer_Interface&>().add(des);
     std::declval<Printer_Interface&>().add(val, des.get_format());
   };

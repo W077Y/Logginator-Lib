@@ -1,13 +1,13 @@
 cmake_minimum_required (VERSION 3.19)
 
 
-set(target_name "Logginator")
+set(target_name "Logginator-Lib")
 
 add_library(${target_name} STATIC)
 target_compile_features(${target_name} PUBLIC cxx_std_23)
 
 
-message(STATUS "->           Logginator:")
+message(STATUS "->       Logginator-Lib:")
 message(STATUS "########################")
 
 
