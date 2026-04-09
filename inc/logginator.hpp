@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <logginator-error.hpp>
 #include <logginator-formator.hpp>
 #include <span>
 #include <string_view>
@@ -14,6 +15,8 @@
 namespace logginator
 {
   class Manager_Interface;
+  class Manager_Base;
+
   class Channel_Interface;
   class line_t;
 
@@ -124,6 +127,10 @@ namespace logginator
   public:
     virtual ~Channel_Interface() = default;
 
+  protected:
+    friend line_t;
+    friend Manager_Base;
+
     virtual channel_description_t const& get_cfg() const                            = 0;
     virtual void                         publish(bool header, std::string_view msg) = 0;
 
@@ -136,11 +143,18 @@ namespace logginator
   public:
     line_t(Channel_Interface& channel, std::span<char> buffer, bool print_header);
 
+    line_t(line_t const&)            = delete;
+    line_t(line_t&&)                 = delete;
+    line_t& operator=(line_t const&) = delete;
+    line_t& operator=(line_t&&)      = delete;
+
     ~line_t();
+
+    channel_description_t const& get_cfg() const { return this->m_channel.get_cfg(); }
 
     template <typename T>
       requires(std::integral<T> && !std::same_as<T, bool>)
-    bool add(column_description_int description, T const& value)
+    void add(column_description_int description, T const& value)
     {
       if (this->m_header)
       {
@@ -150,22 +164,21 @@ namespace logginator
       auto ret = formator::append_int(this->m_pos, this->m_end, value, description.get_format());
       if (ret.ec != std::errc())
       {
-        return false;
+        throw logginator::errors::line_serialization_error();
       }
       ret = formator::append_string(ret.ptr, this->m_end, ";");
       if (ret.ec != std::errc())
       {
-        return false;
+        throw logginator::errors::line_serialization_error();
       }
       this->m_pos = ret.ptr;
-      return true;
     }
 
-    bool add(column_description_int description, bool const& value) { return this->add<char>(description, static_cast<char>(value)); }
+    void add(column_description_int description, bool const& value) { return this->add<char>(description, static_cast<char>(value)); }
 
     template <typename T>
       requires(std::floating_point<T>)
-    bool add(column_description_float description, T const& value)
+    void add(column_description_float description, T const& value)
     {
       if (this->m_header)
       {
@@ -174,20 +187,19 @@ namespace logginator
       auto ret = formator::append_float(this->m_pos, this->m_end, value, description.get_format());
       if (ret.ec != std::errc())
       {
-        return false;
+        throw logginator::errors::line_serialization_error();
       }
       ret = formator::append_string(ret.ptr, this->m_end, ";");
       if (ret.ec != std::errc())
       {
-        return false;
+        throw logginator::errors::line_serialization_error();
       }
       this->m_pos = ret.ptr;
-      return true;
     }
 
-    bool add(column_description_binary description, std::byte const& value) { return this->add(description, std::span<std::byte const>{ &value, 1 }); }
+    void add(column_description_binary description, std::byte const& value) { return this->add(description, std::span<std::byte const>{ &value, 1 }); }
 
-    bool add(column_description_binary description, std::span<std::byte const> value)
+    void add(column_description_binary description, std::span<std::byte const> value)
     {
       if (this->m_header)
       {
@@ -196,18 +208,17 @@ namespace logginator
       auto ret = formator::append_base64(this->m_pos, this->m_end, value);
       if (ret.ec != std::errc())
       {
-        return false;
+        throw logginator::errors::line_serialization_error();
       }
       ret = formator::append_string(ret.ptr, this->m_end, ";");
       if (ret.ec != std::errc())
       {
-        return false;
+        throw logginator::errors::line_serialization_error();
       }
       this->m_pos = ret.ptr;
-      return true;
     }
 
-    bool add(column_description_string description, std::string_view value)
+    void add(column_description_string description, std::string_view value)
     {
       if (this->m_header)
       {
@@ -216,24 +227,23 @@ namespace logginator
       auto ret = formator::append_string(this->m_pos, this->m_end, value);
       if (ret.ec != std::errc())
       {
-        return false;
+        throw logginator::errors::line_serialization_error();
       }
       ret = formator::append_string(ret.ptr, this->m_end, ";");
       if (ret.ec != std::errc())
       {
-        return false;
+        throw logginator::errors::line_serialization_error();
       }
       this->m_pos = ret.ptr;
-      return true;
     }
 
   private:
-    bool add(column_description_int description);
-    bool add(column_description_float description);
-    bool add(column_description_binary description);
-    bool add(column_description_string description);
+    void add(column_description_int description);
+    void add(column_description_float description);
+    void add(column_description_binary description);
+    void add(column_description_string description);
 
-    bool add(std::string_view name, std::string_view unit, std::string_view format);
+    void add(std::string_view name, std::string_view unit, std::string_view format);
 
     Channel_Interface& m_channel;
     bool               m_header;
@@ -294,8 +304,7 @@ namespace logginator
       line_t request_line(bool is_header)
       {
         this->m_man.lock_buffer();
-        line_t line{ *this, this->m_buffer, is_header };
-        return line;
+        return line_t{ *this, this->m_buffer, is_header };
       };
 
     private:
@@ -352,7 +361,7 @@ namespace logginator
     class Output_Interface
     {
     public:
-      virtual void operator()(std::string_view) = 0;
+      virtual void operator()(std::string_view) noexcept = 0;
     };
 
     Manager_Interface(std::span<char> buffer)
@@ -367,8 +376,8 @@ namespace logginator
 
     template <typename T> Channel<T> request_channel(T const&, channel_description_t const& cfg) { return Channel<T>{ *this, cfg, this->m_buffer }; }
 
-  private:
-    virtual void publish(std::string_view msg)           = 0;
+  protected:
+    virtual void publish(std::string_view msg) noexcept  = 0;
     virtual void subscribe(Channel_Interface& channel)   = 0;
     virtual void unsubscribe(Channel_Interface& channel) = 0;
     virtual void lock_buffer()                           = 0;
@@ -389,13 +398,11 @@ namespace logginator
   private:
     static constexpr std::size_t max_number_of_channels = std::numeric_limits<uint8_t>::max() + 1;
 
-    Output_Interface&                                      m_out;
-    std::array<Channel_Interface*, max_number_of_channels> m_list{};
-
-    void publish(std::string_view msg) override { return this->m_out(msg); }
+    void publish(std::string_view msg) noexcept override { return this->m_out(msg); }
 
     void print_channels() override
     {
+      this->lock_list();
       for (auto& ent : this->m_list)
       {
         if (ent == nullptr)
@@ -405,40 +412,53 @@ namespace logginator
 
         ent->print_header();
       }
+      this->unlock_list();
     }
 
     void subscribe(Channel_Interface& channel) override
     {
+      this->lock_list();
       auto& ent = this->m_list.at(channel.get_cfg().ID);
       if (ent != nullptr)
       {
-        throw std::exception();
+        throw logginator::errors::channel_subscribtion_error();
       }
 
       ent = &channel;
+      this->unlock_list();
     }
 
     void unsubscribe(Channel_Interface& channel) override
     {
+      this->lock_list();
       auto& ent = this->m_list.at(channel.get_cfg().ID);
       if (ent != &channel)
       {
-        throw std::exception();
+        throw logginator::errors::channel_subscribtion_error();
       }
 
       ent = nullptr;
+      this->unlock_list();
     }
 
     void setup_channel(uint8_t channel, uint32_t downsample_factor) override
     {
+      this->lock_list();
       auto& ent = this->m_list.at(channel);
       if (ent == nullptr)
       {
-        throw std::exception();
+        throw logginator::errors::channel_setup_error();
       }
 
       ent->setup(downsample_factor);
+      this->unlock_list();
     }
+
+    virtual void lock_list()   = 0;
+    virtual void unlock_list() = 0;
+
+    Output_Interface&                                      m_out;
+    std::array<Channel_Interface*, max_number_of_channels> m_list{};
   };
 
   template <typename MutexType, std::size_t Buffer_Size> class Manager final: public Manager_Base
@@ -449,13 +469,17 @@ namespace logginator
     {
     }
 
-    void lock_buffer() override { this->m_mutex.lock(); }
-    void unlock_buffer() override { this->m_mutex.unlock(); }
+    void lock_buffer() override { this->m_mutex_buffer.lock(); }
+    void unlock_buffer() override { this->m_mutex_buffer.unlock(); }
+
+    void lock_list() override { this->m_mutex_list.lock(); }
+    void unlock_list() override { this->m_mutex_list.unlock(); }
 
   private:
-    MutexType                     m_mutex;
+    MutexType                     m_mutex_buffer;
+    MutexType                     m_mutex_list;
     std::array<char, Buffer_Size> m_buffer{};
   };
 }    // namespace logginator
 
-#endif    // !LOGGINATOR_UC_HPP_INCLUDED
+#endif    // !LOGGINATOR_HPP_INCLUDED

@@ -1,210 +1,304 @@
-# Logginator
+# Logginator Library
 
-A lightweight, type-safe logging / telemetry framework designed for embedded systems.
+A **type-safe, zero-allocation structured logging framework** for embedded systems and high-performance applications.
 
-The library provides a structured way to format and output measurement data with minimal runtime overhead and without dynamic memory allocation.
+Logginator provides deterministic, thread-safe telemetry output with compile-time safety guarantees. All formatting happens with fixed-size buffers—no dynamic allocation, no surprises.
 
-# Overview
+## Key Features
 
-logginator is built around three main concepts:
+✅ **Zero Dynamic Allocation** — Fixed buffers via `std::span<char>`  
+✅ **Thread-Safe** — Separate mutexes for buffer and channel list  
+✅ **Compile-Time Type Safety** — Concepts & consteval constraints  
+✅ **RAII Publishing** — Automatic flush on scope exit  
+✅ **Channel-Based Routing** — Multiple independent channels (0-255)  
+✅ **Per-Channel Downsampling** — Reduce output volume intelligently  
+✅ **Custom Formats** — ASCII, Hex, Base64, Scientific notation  
+✅ **ADL-Based Extensibility** — Add custom types without modifying library  
+✅ **Minimal Overhead** — Suitable for real-time / embedded systems  
 
-- **Manager**
-  
-  Central instance responsible for routing messages to an output.
+## Architecture
 
-- **Printer**
-  
-  Per-type formatter that converts structured data into a textual representation.
+### Core Components
 
-- **line_t**
-  
-  A temporary object representing a single log line. Uses RAII to ensure automatic publishing.
+| Component | Purpose |
+|-----------|---------|
+| **Manager** | Central router; manages channels and publishes to output backend |
+| **Channel** | Identified message stream with configurable downsampling |
+| **line_t** | RAII wrapper for a single log line; ensures complete publishing |
+| **Printer<T>** | Type-specific formatter registered on a channel |
 
-# Key Features
+### Format Specification
 
-- No dynamic memory allocation
-
-- Fixed-size buffers (std::span<char>)
-
-- Type-safe formatting via print(value, line)
-
-- RAII-based publishing (no manual flush required)
-
-- Channel-based logging with IDs
-
-- Optional per-channel downsampling
-
-- Header generation for structured output
-
-# Basic Usage
-
-1) **Define your data type**
-
-``` cpp
-struct my_data
-{
-  std::size_t time;
-  double temperature;
-};
+```
+#<channel_id>;<name>[<unit>]{<format>};<value>;<value>;...
 ```
 
-2) **Implement formatting**
-
-``` cpp
-void print(my_data const& value, logginator::line_t& line)
-{
-  line.add({ "time", "s", "int" }, value.time);
-  line.add({ "temperature", "degC", "float" }, value.temperature);
-}
+**Example:**
+```
+#42;temperature[°C]{ascii_fixed};23.50
+#42;pressure[Pa]{hex};0x1a2b3c4d
 ```
 
-3) **Provide a printer**
+## Getting Started
 
-``` cpp
-logginator::line_t request_line(my_data const&)
-{
-  static logginator::Printer<std::mutex, my_data, 256> printer{
-    request_manager(),
-    logginator::channel_description_t{ 1, "temperature" }
+### 1. Define Your Data Type
+
+```cpp
+namespace my_app {
+  struct SensorData {
+    std::size_t timestamp;      // milliseconds
+    double temperature;         // Celsius
+    double humidity;            // %
   };
-  return printer.request_line();
 }
 ```
 
-4) **Log data**
+### 2. Implement Formatting (ADL Hook)
 
-``` cpp
-my_data data{ .time = 42, .temperature = 23.5 };
-logginator::print(data);
+Provide `print()` and `request_line()` in your namespace:
+
+```cpp
+namespace my_app {
+  // Print a single measurement into the log line
+  void print(SensorData const& data, logginator::line_t& line) {
+    using namespace logginator;
+    using FI = column_description_int::Format;
+    using FF = column_description_float::Format;
+    
+    line.add(column_description_int{"time", "ms", FI::ascii}, data.timestamp);
+    line.add(column_description_float{"temp", "°C", FF::ascii_fixed}, data.temperature);
+    line.add(column_description_float{"humidity", "%", FF::ascii_fixed}, data.humidity);
+  }
+
+  // Request a new log line
+  logginator::line_t request_line(SensorData const&) {
+    static logginator::Manager<std::mutex, 512>& manager = get_manager();
+    static auto channel = logginator::channel_description_t{
+      .ID = 1,
+      .name = "sensors"
+    };
+    return manager.request_line(channel, false);
+  }
+}
 ```
 
+### 3. Create a Manager
 
-# Output Format
+Implement the output backend:
 
-Each line is formatted as:
+```cpp
+#include <iostream>
 
-``` cpp
-#<channel_id>;<value1>;<value2>;...
-```
-
-Example:
-
-``` cpp
-#01;42;23.5
-```
-
-# Header Output
-
-Headers can be printed using:
-
-``` cpp
-manager.print_channels();
-```
-
-Example:
-
-``` cpp
-#01:temperature;time[s]{int};temperature[degC]{float};
-```
-
-# Manager Setup
-
-You must provide an output backend:
-
-``` cpp
-struct MyOutput : logginator::Manager::Output_Interface
-{
-  void operator()(std::string_view msg) override
-  {
-    std::cout << msg;
+struct ConsoleOutput : logginator::Manager_Interface::Output_Interface {
+  void operator()(std::string_view msg) noexcept override {
+    std::cout << msg << "\n";
   }
 };
 
-MyOutput output;
-logginator::Manager manager{ output };
+ConsoleOutput output;
+logginator::Manager<std::mutex, 4096> manager{output};
 ```
 
-# Channel Configuration
+### 4. Log Your Data
 
-## Subscribe
+```cpp
+my_app::SensorData data{
+  .timestamp = 12345,
+  .temperature = 22.5,
+  .humidity = 65.3
+};
 
-Handled automatically by Printer construction.
-
-## Downsampling
-
-``` cpp
-manager.setup_channel(1, 10);
+logginator::print(data);  // Publishes automatically on scope exit
 ```
 
-Only every 10th sample will be emitted.
+## Format Options
 
-# Design Notes
+### Integer Formats
+- `ascii` — Decimal string
+- `hex` — Hexadecimal (0x prefix)
+- `b64` — Base64 encoding
 
-## RAII Logging
+### Float Formats
+- `ascii` — Shortest representation
+- `ascii_fixed` — Fixed-point notation
+- `ascii_scientific` — Scientific notation
+- `hex` — Hexadecimal floating-point
+- `b64` — Base64 encoding
 
-A log line is published automatically when line_t goes out of scope:
+### Binary Formats
+- `b64` — Base64 (only option)
 
-``` cpp
+### String Formats
+- `ascii` — Raw UTF-8 (only option)
+
+## Configuration
+
+### Setup Channels
+
+```cpp
+auto& mgr = manager;
+
+// Set ID 1 to buffer size for channel "sensors"
+mgr.setup_channel(1, 1);  // Send every sample
+
+// Set ID 2 to downsample every 10th sample
+mgr.setup_channel(2, 10);
+
+// Print channel headers
+mgr.print_channels();
+```
+
+Output:
+```
+#01:sensors;time[ms]{ascii};temp[°C]{ascii_fixed};humidity[%]{ascii_fixed};
+#02:metrics;...
+```
+
+### Downsampling
+
+Reduces verbosity for high-frequency data:
+
+```cpp
+mgr.setup_channel(channel_id, 100);  // Only log every 100th sample
+```
+
+Counter resets per channel independently.
+
+## Thread Safety
+
+Logginator uses **two separate mutexes**:
+
+- `m_mutex_buffer` — Protects the shared character buffer during serialization
+- `m_mutex_list` — Protects the channel subscription list during setup
+
+This design prevents deadlocks while ensuring thread-safe operation.
+
+```cpp
+// Safe to call from multiple threads
+std::thread t1([&]{ logginator::print(data1); });
+std::thread t2([&]{ logginator::print(data2); });
+std::thread t3([&]{ mgr.setup_channel(1, 5); });
+
+t1.join(); t2.join(); t3.join();
+```
+
+## Design Rationale
+
+### RAII Publishing
+
+Log lines cannot be partially published:
+
+```cpp
 {
-  auto line = printer.request_line();
-  line.add(...);
-} // <-- publish happens here
-```
-
-This prevents incomplete log lines and enforces consistent formatting.
-
-## Customization via ADL
-
-The library relies on Argument-Dependent Lookup (ADL):
-
-- `print(T const&, line_t&)`
-- `request_line(T const&)`
-
-This allows extending the system for new types without modifying the library.
-
-## No Dynamic Allocation
-
-All buffers are statically provided:
-
-``` cpp
-logginator::Printer<T, N>
-```
-
-The size N defines the maximum length of a log line.
-
-## Limitations
-
-- Not thread-safe / not interrupt-safe
-
-- Single active line per printer
-
-- Buffer overflow handling is limited (may throw or truncate depending on type)
-
-- Requires careful configuration in embedded environments (exceptions, RTTI, etc.)
-
-## Recommendations
-
-- Use sufficiently large buffers per channel
-
-- Avoid logging in interrupt context
-
-- Keep formatting functions simple and deterministic
-
-- Ensure channel IDs are unique
-
-## Example
-
-``` cpp
-for (std::size_t i = 0; i < 10; ++i)
-{
-  my_data data{ i, 20.0 + i };
-  logginator::print(data);
+  auto line = request_line();
+  line.add("temp", "°C", "float", 22.5);
+  line.add("pressure", "Pa", "int", 101325);
+  // Destructor publishes complete line automatically
 }
 ```
 
+### ADL-Based Customization
 
-# License
+No template specialization needed. Just define in your namespace:
 
-This project is licensed under the MIT License.
+```cpp
+namespace my_types {
+  void print(MyType const&, logginator::line_t&) { /* your code */ }
+  logginator::line_t request_line(MyType const&) { /* your code */ }
+}
+
+// Library finds them via ADL
+logginator::print(my_types::value);  // ✓ Works!
+```
+
+### Compile-Time Safety
+
+```cpp
+// ✓ OK — matches concept
+line.add(column_description_int{...}, int64_t{42});
+
+// ✗ Compile Error — bool not allowed
+line.add(column_description_int{...}, bool{true});
+
+// ✓ OK — bool has separate overload
+line.add(column_description_int{...}, true);
+```
+
+## Limitations & Constraints
+
+⚠️ **No Dynamic Allocation** — Buffer sizes must be configured at compile-time  
+⚠️ **Single Active Line Per Manager** — Cannot nest `request_line()` calls  
+⚠️ **Buffer Overflow Throws** — Set buffers large enough for your data  
+⚠️ **Not Interrupt-Safe** — Do not call from interrupt handlers  
+⚠️ **ADL Dependency** — Custom types must provide print/request_line in their namespace  
+
+## Performance Characteristics
+
+- **Zero Runtime Overhead** for formatting decisions (all constexpr)
+- **O(1)** channel lookup by ID
+- **O(buffer_size)** for serialization
+- **Minimal Stack Usage** — All state in static Manager instance
+
+## Error Handling
+
+The library throws `logginator::errors::*` exceptions:
+
+| Exception | Cause |
+|-----------|-------|
+| `line_serialization_error` | Buffer overflow during formatting |
+| `channel_subscription_error` | Channel ID conflict during setup |
+
+Catch them or configure error handling in embedded environments.
+
+## Example: Multi-Channel System
+
+```cpp
+namespace telemetry {
+  struct Acceleration {
+    double ax, ay, az;
+  };
+
+  struct Gyroscope {
+    double gx, gy, gz;
+  };
+
+  void print(Acceleration const& a, logginator::line_t& line) {
+    line.add({"ax", "m/s²", "ascii"}, a.ax);
+    line.add({"ay", "m/s²", "ascii"}, a.ay);
+    line.add({"az", "m/s²", "ascii"}, a.az);
+  }
+
+  logginator::line_t request_line(Acceleration const&) {
+    static auto& mgr = get_manager();
+    return mgr.request_line({10, "accel"}, false);
+  }
+
+  // ...same for Gyroscope on channel 11
+}
+
+// Usage
+int main() {
+  auto& mgr = get_manager();
+  mgr.setup_channel(10, 1);   // Log all accel samples
+  mgr.setup_channel(11, 10);  // Log every 10th gyro sample
+
+  for (int i = 0; i < 1000; ++i) {
+    logginator::print(accel_data[i]);      // 1000 lines
+    logginator::print(gyro_data[i]);       // ~100 lines
+  }
+}
+```
+
+## Embedded Best Practices
+
+1. **Pre-allocate Manager buffer** — Know your maximum line size
+2. **Use downsampling** — Reduce I/O jitter
+3. **Keep format functions simple** — Avoid branches, compute before logging
+4. **Minimize string literals** — Use constexpr descriptions
+5. **Test buffer overflow scenarios** — Ensure exception handling works
+
+## License
+
+MIT License — See LICENSE file for details
 
 

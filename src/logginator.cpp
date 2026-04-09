@@ -137,64 +137,63 @@ namespace logginator
     this->m_channel.publish(this->m_header, std::string_view{ this->m_begin, this->m_pos });
   }
 
-  bool line_t::add(std::string_view name, std::string_view unit, std::string_view format)
+  void line_t::add(std::string_view name, std::string_view unit, std::string_view format)
   {
     auto ret = logginator::formator::append_string(this->m_pos, this->m_end, name);
     if (ret.ec != std::errc())
     {
-      return false;
+      throw logginator::errors::line_serialization_error();
     }
 
     ret = logginator::formator::append_string(ret.ptr, this->m_end, "[");
     if (ret.ec != std::errc())
     {
-      return false;
+      throw logginator::errors::line_serialization_error();
     }
 
     ret = logginator::formator::append_string(ret.ptr, this->m_end, unit);
     if (ret.ec != std::errc())
     {
-      return false;
+      throw logginator::errors::line_serialization_error();
     }
 
     ret = logginator::formator::append_string(ret.ptr, this->m_end, "]{");
     if (ret.ec != std::errc())
     {
-      return false;
+      throw logginator::errors::line_serialization_error();
     }
 
     ret = logginator::formator::append_string(ret.ptr, this->m_end, format);
     if (ret.ec != std::errc())
     {
-      return false;
+      throw logginator::errors::line_serialization_error();
     }
 
     ret = logginator::formator::append_string(ret.ptr, this->m_end, "};");
     if (ret.ec != std::errc())
     {
-      return false;
+      throw logginator::errors::line_serialization_error();
     }
 
     this->m_pos = ret.ptr;
-    return true;
   }
 
-  bool line_t::add(column_description_int description)
+  void line_t::add(column_description_int description)
   {
     return this->add(description.get_name(), description.get_unit(), to_string_view(description.get_format()));
   }
 
-  bool line_t::add(column_description_float description)
+  void line_t::add(column_description_float description)
   {
     return this->add(description.get_name(), description.get_unit(), to_string_view(description.get_format()));
   }
 
-  bool line_t::add(column_description_binary description)
+  void line_t::add(column_description_binary description)
   {
     return this->add(description.get_name(), description.get_unit(), to_string_view(description.get_format()));
   }
 
-  bool line_t::add(column_description_string description)
+  void line_t::add(column_description_string description)
   {
     return this->add(description.get_name(), description.get_unit(), to_string_view(description.get_format()));
   }
