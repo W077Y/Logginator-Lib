@@ -1,10 +1,9 @@
 #pragma once
-#include <cstdint>
 #ifndef LOGGINATOR_PRINTER_HPP_INCLUDED
 #define LOGGINATOR_PRINTER_HPP_INCLUDED
 
+#include <cstdint>
 #include <logginator.hpp>
-#include <string_view>
 
 namespace logginator
 {
@@ -22,32 +21,7 @@ namespace logginator
     line_t                       request_line(bool is_header);
     void                         print_header() override;
     void                         setup(uint32_t downsample_factor) override;
-    void                         publish(bool is_header) override;
-    virtual void                 add(column_description_int const& description) override;
-    virtual void                 add(column_description_float const& description) override;
-    virtual void                 add(column_description_binary const& description) override;
-    virtual void                 add(column_description_string const& description) override;
-    virtual void                 add(bool const& value, column_description_int::Format fmt) override;
-    virtual void                 add(char const& value, column_description_int::Format fmt) override;
-    virtual void                 add(signed char const& value, column_description_int::Format fmt) override;
-    virtual void                 add(unsigned char const& value, column_description_int::Format fmt) override;
-    virtual void                 add(char8_t const& value, column_description_int::Format fmt) override;
-    virtual void                 add(char16_t const& value, column_description_int::Format fmt) override;
-    virtual void                 add(char32_t const& value, column_description_int::Format fmt) override;
-    virtual void                 add(signed short const& value, column_description_int::Format fmt) override;
-    virtual void                 add(unsigned short const& value, column_description_int::Format fmt) override;
-    virtual void                 add(signed int const& value, column_description_int::Format fmt) override;
-    virtual void                 add(unsigned int const& value, column_description_int::Format fmt) override;
-    virtual void                 add(signed long int const& value, column_description_int::Format fmt) override;
-    virtual void                 add(unsigned long int const& value, column_description_int::Format fmt) override;
-    virtual void                 add(signed long long int const& value, column_description_int::Format fmt) override;
-    virtual void                 add(unsigned long long int const& value, column_description_int::Format fmt) override;
-    virtual void                 add(float const& value, column_description_float::Format fmt) override;
-    virtual void                 add(double const& value, column_description_float::Format fmt) override;
-    virtual void                 add(long double const& value, column_description_float::Format fmt) override;
-    virtual void                 add(std::byte const& value, column_description_binary::Format fmt) override;
-    virtual void                 add(std::span<std::byte const> value, column_description_binary::Format fmt) override;
-    virtual void                 add(std::string_view value, column_description_string::Format fmt) override;
+    void                         publish(bool is_header, std::string_view msg) override;
 
     virtual void lock_line()   = 0;
     virtual void unlock_line() = 0;

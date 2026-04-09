@@ -3,11 +3,12 @@
 #define LOGGINATOR_HPP_INCLUDED
 
 #include <concepts>
+#include <cstddef>
 #include <cstdint>
+#include <logginator-formator.hpp>
 #include <span>
 #include <string_view>
 #include <type_traits>
-#include <utility>
 
 namespace logginator
 {
@@ -47,13 +48,8 @@ namespace logginator
   class column_description_int final: public column_description_t
   {
   public:
-    enum class Format
-    {
-      ascii,
-      hex,
-      b64,
-      default_fmt = ascii,
-    };
+    using Format = logginator::formator::IntergerFormat;
+
     consteval column_description_int(char const* name, char const* unit, Format fmt)
         : column_description_t(name, unit)
         , fmt{ fmt }
@@ -69,15 +65,8 @@ namespace logginator
   class column_description_float final: public column_description_t
   {
   public:
-    enum class Format
-    {
-      ascii,
-      ascii_fixed,
-      ascii_scientific,
-      hex,
-      b64,
-      default_fmt = ascii,
-    };
+    using Format = logginator::formator::FloatFormat;
+
     consteval column_description_float(char const* name, char const* unit, Format fmt)
         : column_description_t(name, unit)
         , fmt{ fmt }
@@ -146,64 +135,118 @@ namespace logginator
   public:
     virtual ~Printer_Interface() = default;
 
-    virtual channel_description_t const& get_cfg() const                                                              = 0;
-    virtual void                         print_header()                                                               = 0;
-    virtual void                         setup(uint32_t downsample_factor)                                            = 0;
-    virtual void                         publish(bool is_header)                                                      = 0;
-    virtual void                         add(column_description_int const& description)                               = 0;
-    virtual void                         add(column_description_float const& description)                             = 0;
-    virtual void                         add(column_description_binary const& description)                            = 0;
-    virtual void                         add(column_description_string const& description)                            = 0;
-    virtual void                         add(bool const& value, column_description_int::Format fmt)                   = 0;
-    virtual void                         add(char const& value, column_description_int::Format fmt)                   = 0;
-    virtual void                         add(signed char const& value, column_description_int::Format fmt)            = 0;
-    virtual void                         add(unsigned char const& value, column_description_int::Format fmt)          = 0;
-    virtual void                         add(char8_t const& value, column_description_int::Format fmt)                = 0;
-    virtual void                         add(char16_t const& value, column_description_int::Format fmt)               = 0;
-    virtual void                         add(char32_t const& value, column_description_int::Format fmt)               = 0;
-    virtual void                         add(signed short const& value, column_description_int::Format fmt)           = 0;
-    virtual void                         add(unsigned short const& value, column_description_int::Format fmt)         = 0;
-    virtual void                         add(signed int const& value, column_description_int::Format fmt)             = 0;
-    virtual void                         add(unsigned int const& value, column_description_int::Format fmt)           = 0;
-    virtual void                         add(signed long int const& value, column_description_int::Format fmt)        = 0;
-    virtual void                         add(unsigned long int const& value, column_description_int::Format fmt)      = 0;
-    virtual void                         add(signed long long int const& value, column_description_int::Format fmt)   = 0;
-    virtual void                         add(unsigned long long int const& value, column_description_int::Format fmt) = 0;
-    virtual void                         add(float const& value, column_description_float::Format fmt)                = 0;
-    virtual void                         add(double const& value, column_description_float::Format fmt)               = 0;
-    virtual void                         add(long double const& value, column_description_float::Format fmt)          = 0;
-    virtual void                         add(std::byte const& value, column_description_binary::Format fmt)           = 0;
-    virtual void                         add(std::span<std::byte const> value, column_description_binary::Format fmt) = 0;
-    virtual void                         add(std::string_view value, column_description_string::Format fmt)           = 0;
-  };
-
-  template <typename T, typename D>
-  concept is_supported_by_Printer_Interface = requires(T const& val, D const& des) {
-    requires std::same_as<decltype(des.get_format()), typename D::Format>;
-    std::declval<Printer_Interface&>().add(des);
-    std::declval<Printer_Interface&>().add(val, des.get_format());
+    virtual channel_description_t const& get_cfg() const                               = 0;
+    virtual void                         print_header()                                = 0;
+    virtual void                         setup(uint32_t downsample_factor)             = 0;
+    virtual void                         publish(bool is_header, std::string_view msg) = 0;
   };
 
   class line_t
   {
   public:
-    line_t(Printer_Interface& printer, bool print_header);
+    line_t(Printer_Interface& printer, char* begin, char* pos, char* end, bool print_header);
     ~line_t();
 
-    template <typename T, typename D>
-      requires(is_supported_by_Printer_Interface<T, D>)
-    void add(D const& description, T const& value)
+    template <typename T>
+      requires(std::integral<T> && !std::same_as<T, bool>)
+    bool add(column_description_int description, T const& value)
     {
       if (this->m_header)
       {
-        return this->m_printer.add(description);
+        return this->add(description);
       }
-      return this->m_printer.add(value, description.get_format());
+      auto ret = formator::append_int(this->m_pos, this->m_end, value, description.get_format());
+      if (ret.ec != std::errc())
+      {
+        return false;
+      }
+      ret = formator::append_string(ret.ptr, this->m_end, ";");
+      if (ret.ec != std::errc())
+      {
+        return false;
+      }
+      this->m_pos = ret.ptr;
+      return true;
+    }
+
+    bool add(column_description_int description, bool const& value) { return this->add<char>(description, static_cast<char>(value)); }
+
+    template <typename T>
+      requires(std::floating_point<T>)
+    bool add(column_description_float description, T const& value)
+    {
+      if (this->m_header)
+      {
+        return this->add(description);
+      }
+      auto ret = formator::append_float(this->m_pos, this->m_end, value, description.get_format());
+      if (ret.ec != std::errc())
+      {
+        return false;
+      }
+      ret = formator::append_string(ret.ptr, this->m_end, ";");
+      if (ret.ec != std::errc())
+      {
+        return false;
+      }
+      this->m_pos = ret.ptr;
+      return true;
+    }
+
+    bool add(column_description_binary description, std::byte const& value) { return this->add(description, std::span<std::byte const>{ &value, 1 }); }
+    bool add(column_description_binary description, std::span<std::byte const> value)
+    {
+      if (this->m_header)
+      {
+        return this->add(description);
+      }
+      auto ret = formator::append_base64(this->m_pos, this->m_end, value);
+      if (ret.ec != std::errc())
+      {
+        return false;
+      }
+      ret = formator::append_string(ret.ptr, this->m_end, ";");
+      if (ret.ec != std::errc())
+      {
+        return false;
+      }
+      this->m_pos = ret.ptr;
+      return true;
+    }
+
+    bool add(column_description_string description, std::string_view value)
+    {
+      if (this->m_header)
+      {
+        return this->add(description);
+      }
+      auto ret = formator::append_string(this->m_pos, this->m_end, value);
+      if (ret.ec != std::errc())
+      {
+        return false;
+      }
+      ret = formator::append_string(ret.ptr, this->m_end, ";");
+      if (ret.ec != std::errc())
+      {
+        return false;
+      }
+      this->m_pos = ret.ptr;
+      return true;
     }
 
   private:
+    bool add(column_description_int description);
+    bool add(column_description_float description);
+    bool add(column_description_binary description);
+    bool add(column_description_string description);
+
+    bool add(std::string_view name, std::string_view unit, std::string_view format);
+
     Printer_Interface& m_printer;
     bool               m_header;
+    char*              m_begin;
+    char*              m_pos;
+    char* const        m_end;
   };
 
   template <typename T> void print(T const& value, line_t& line) { return print(value, line); }

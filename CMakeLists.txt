@@ -20,6 +20,7 @@ target_sources(${target_name}
  PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/logginator.cpp"
  PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/logginator-manager.cpp"
  PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/logginator-printer.cpp"
+ PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/logginator-formator.cpp"
 )
 
 target_link_libraries(${target_name}
