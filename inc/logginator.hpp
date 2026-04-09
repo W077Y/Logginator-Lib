@@ -10,7 +10,6 @@
 #include <logginator-formator.hpp>
 #include <span>
 #include <string_view>
-#include <type_traits>
 
 namespace logginator
 {
@@ -252,16 +251,22 @@ namespace logginator
     char* const        m_end;
   };
 
-  template <typename T> void print(T const& value, line_t& line) { return print(value, line); }
+  namespace detail
+  {
+    template <typename T> void adl_print(T const& value, line_t& line) { return print(value, line); }
 
-  template <typename T> line_t request_line(T const& value) { return request_line(value); }
+    template <typename T> line_t adl_request_line(T const& value) { return request_line(value); }
+  }    // namespace detail
 
   template <typename T>
-    requires(std::destructible<T> && std::default_initializable<T> && std::is_copy_constructible_v<T>)
+    requires std::destructible<T> && std::default_initializable<T> && requires(const T& value, line_t& line) {
+      { detail::adl_print(value, line) } -> std::same_as<void>;
+      { detail::adl_request_line(value) } -> std::same_as<line_t>;
+    }
   void print(T const& value)
   {
-    auto line = request_line(value);
-    print(value, line);
+    auto line = detail::adl_request_line(value);
+    detail::adl_print(value, line);
   }
 
   class Manager_Interface
@@ -354,7 +359,7 @@ namespace logginator
       ~Channel() { this->m_man.unsubscribe(*this); }
 
     private:
-      static void print_column_description(line_t& line) { return logginator::print(T{}, line); };
+      static void print_column_description(line_t& line) { return print(T{}, line); };
     };
 
   public:
