@@ -238,8 +238,8 @@ namespace telemetry {
 // Usage
 int main() {
   auto& mgr = get_manager();
-  mgr.setup_channel(10, 1);   // Log all accel samples
-  mgr.setup_channel(11, 10);  // Log every 10th gyro sample
+  mgr.setup_channel(request_line(Acceleration{}).get_cfg().ID, 1);   // Log all accel samples
+  mgr.setup_channel(request_line(Gyroscope{}).get_cfg().ID, 10);  // Log every 10th gyro sample
 
   for (int i = 0; i < 1000; ++i) {
     logginator::print(accel_data[i]);      // 1000 lines
