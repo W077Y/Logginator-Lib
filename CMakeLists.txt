@@ -18,12 +18,12 @@ target_include_directories(${target_name}
 
 target_sources(${target_name}
  PRIVATE "${CMAKE_CURRENT_LIST_DIR}/inc/logginator.hpp"
- PRIVATE "${CMAKE_CURRENT_LIST_DIR}/inc/logginator-formator.hpp"
+ PRIVATE "${CMAKE_CURRENT_LIST_DIR}/inc/logginator-format.hpp"
 )
 
 target_sources(${target_name}
  PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/logginator.cpp"
- PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/logginator-formator.cpp"
+ PRIVATE "${CMAKE_CURRENT_LIST_DIR}/src/logginator-format.cpp"
 )
 
 target_link_libraries(${target_name}

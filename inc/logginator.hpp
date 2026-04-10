@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <limits>
 #include <logginator-error.hpp>
-#include <logginator-formator.hpp>
+#include <logginator-format.hpp>
 #include <span>
 #include <string_view>
 
@@ -19,9 +19,9 @@ namespace logginator
   class Channel_Interface;
   class line_t;
 
-  struct channel_description_t
+  struct ChannelDescription
   {
-    consteval channel_description_t(uint8_t id, char const* name)
+    consteval ChannelDescription(uint8_t id, std::string_view name)
         : ID{ id }
         , name{ name }
     {
@@ -31,95 +31,49 @@ namespace logginator
     std::string_view const name;
   };
 
-  class column_description_t
+  namespace detail
   {
-  public:
-    std::string_view get_name() const noexcept { return this->name; }
-    std::string_view get_unit() const noexcept { return this->unit; }
-
-  protected:
-    consteval column_description_t(char const* name, char const* unit)
-        : name{ name }
-        , unit{ unit }
+    class column_description_t
     {
-    }
+    public:
+      constexpr std::string_view get_name() const noexcept { return this->name; }
+      constexpr std::string_view get_unit() const noexcept { return this->unit; }
 
-    std::string_view const name;
-    std::string_view const unit;
-  };
+    protected:
+      consteval column_description_t(std::string_view name, std::string_view unit)
+          : name{ name }
+          , unit{ unit }
+      {
+      }
 
-  class column_description_int final: public column_description_t
-  {
-  public:
-    using Format = logginator::formator::IntergerFormat;
-
-    consteval column_description_int(char const* name, char const* unit, Format fmt)
-        : column_description_t(name, unit)
-        , fmt{ fmt }
-    {
-    }
-
-    constexpr Format get_format() const noexcept { return this->fmt; }
-
-  private:
-    Format fmt;
-  };
-
-  class column_description_float final: public column_description_t
-  {
-  public:
-    using Format = logginator::formator::FloatFormat;
-
-    consteval column_description_float(char const* name, char const* unit, Format fmt)
-        : column_description_t(name, unit)
-        , fmt{ fmt }
-    {
-    }
-
-    constexpr Format get_format() const noexcept { return this->fmt; }
-
-  private:
-    Format fmt;
-  };
-  struct column_description_binary final: public column_description_t
-  {
-  public:
-    enum class Format
-    {
-      b64,
-      default_fmt = b64,
+      std::string_view const name;
+      std::string_view const unit;
     };
-    consteval column_description_binary(char const* name, char const* unit, Format fmt)
-        : column_description_t(name, unit)
-        , fmt{ fmt }
+
+    template <typename T>
+      requires(std::is_enum_v<T>)
+    class column_description_format final: public column_description_t
     {
-    }
+    public:
+      using Format = T;
 
-    constexpr Format get_format() const noexcept { return this->fmt; }
+      consteval column_description_format(std::string_view name, std::string_view unit, Format fmt)
+          : column_description_t(name, unit)
+          , fmt{ fmt }
+      {
+      }
 
-  private:
-    Format fmt;
-  };
+      constexpr Format get_format() const noexcept { return this->fmt; }
 
-  struct column_description_string final: public column_description_t
-  {
-  public:
-    enum class Format
-    {
-      ascii,
-      default_fmt = ascii,
+    private:
+      Format const fmt;
     };
-    consteval column_description_string(char const* name, char const* unit, Format fmt)
-        : column_description_t(name, unit)
-        , fmt{ fmt }
-    {
-    }
+  }    // namespace detail
 
-    constexpr Format get_format() const noexcept { return this->fmt; }
-
-  private:
-    Format fmt;
-  };
+  using ColumnDescriptionInt    = detail::column_description_format<format::IntegerFormat>;
+  using ColumnDescriptionFloat  = detail::column_description_format<format::FloatFormat>;
+  using ColumnDescriptionBinary = detail::column_description_format<format::BinaryFormat>;
+  using ColumnDescriptionString = detail::column_description_format<format::StringFormat>;
 
   class Channel_Interface
   {
@@ -130,14 +84,12 @@ namespace logginator
     friend line_t;
     friend Manager_Base;
 
-    virtual channel_description_t const& get_cfg() const                            = 0;
-    virtual void                         publish(bool header, std::string_view msg) = 0;
-
-    virtual void print_header()                    = 0;
-    virtual void setup(uint32_t downsample_factor) = 0;
-
-    virtual void lock_buffer()   = 0;
-    virtual void unlock_buffer() = 0;
+    virtual ChannelDescription const& get_cfg() const&                             = 0;
+    virtual void                      publish(bool header, std::string_view msg) & = 0;
+    virtual void                      print_header() &                             = 0;
+    virtual void                      setup(uint32_t downsample_factor) &          = 0;
+    virtual void                      lock_buffer() &                              = 0;
+    virtual void                      unlock_buffer() &                            = 0;
 
     struct ChannelLock
     {
@@ -161,32 +113,32 @@ namespace logginator
   class line_t
   {
   public:
-    line_t(Channel_Interface& channel, std::span<char> buffer, bool print_header);
-
     line_t(line_t const&)            = delete;
     line_t(line_t&&)                 = delete;
     line_t& operator=(line_t const&) = delete;
     line_t& operator=(line_t&&)      = delete;
 
+    line_t(Channel_Interface& channel, std::span<char> buffer, bool print_header);
     ~line_t();
 
-    channel_description_t const& get_cfg() const { return this->m_channel.channel.get_cfg(); }
+    ChannelDescription const& get_cfg() const& { return this->m_channel.channel.get_cfg(); }
 
-    template <typename T>
-      requires(std::integral<T> && !std::same_as<T, bool>)
-    void add(column_description_int description, T const& value)
+    template <typename D, typename T>
+      requires((std::same_as<D, ColumnDescriptionInt> && std::integral<T> && !std::same_as<T, bool>) ||
+               (std::same_as<D, ColumnDescriptionFloat> && std::floating_point<T>))
+    void add(D const& description, T const& value) &
     {
       if (this->m_header)
       {
         return this->add(description);
       }
 
-      auto ret = formator::append_int(this->m_pos, this->m_end, value, description.get_format());
+      auto ret = format::append(this->m_pos, this->m_end, value, description.get_format());
       if (ret.ec != std::errc())
       {
         throw logginator::errors::line_serialization_error();
       }
-      ret = formator::append_string(ret.ptr, this->m_end, ";");
+      ret = format::append_string(ret.ptr, this->m_end, ";");
       if (ret.ec != std::errc())
       {
         throw logginator::errors::line_serialization_error();
@@ -194,22 +146,23 @@ namespace logginator
       this->m_pos = ret.ptr;
     }
 
-    void add(column_description_int description, bool const& value) { return this->add<char>(description, static_cast<char>(value)); }
+    void add(ColumnDescriptionInt description, bool const& value) & { return this->add(description, static_cast<char>(value)); }
 
-    template <typename T>
-      requires(std::floating_point<T>)
-    void add(column_description_float description, T const& value)
+    void add(ColumnDescriptionBinary const& description, std::byte const& value) & { return this->add(description, std::span<std::byte const>{ &value, 1 }); }
+
+    void add(ColumnDescriptionBinary const& description, std::span<std::byte const> const& value) &
     {
       if (this->m_header)
       {
         return this->add(description);
       }
-      auto ret = formator::append_float(this->m_pos, this->m_end, value, description.get_format());
+
+      auto ret = format::append(this->m_pos, this->m_end, value, description.get_format());
       if (ret.ec != std::errc())
       {
         throw logginator::errors::line_serialization_error();
       }
-      ret = formator::append_string(ret.ptr, this->m_end, ";");
+      ret = format::append_string(ret.ptr, this->m_end, ";");
       if (ret.ec != std::errc())
       {
         throw logginator::errors::line_serialization_error();
@@ -217,39 +170,19 @@ namespace logginator
       this->m_pos = ret.ptr;
     }
 
-    void add(column_description_binary description, std::byte const& value) { return this->add(description, std::span<std::byte const>{ &value, 1 }); }
-
-    void add(column_description_binary description, std::span<std::byte const> value)
+    void add(ColumnDescriptionString const& description, std::string_view value) &
     {
       if (this->m_header)
       {
         return this->add(description);
       }
-      auto ret = formator::append_base64(this->m_pos, this->m_end, value);
-      if (ret.ec != std::errc())
-      {
-        throw logginator::errors::line_serialization_error();
-      }
-      ret = formator::append_string(ret.ptr, this->m_end, ";");
-      if (ret.ec != std::errc())
-      {
-        throw logginator::errors::line_serialization_error();
-      }
-      this->m_pos = ret.ptr;
-    }
 
-    void add(column_description_string description, std::string_view value)
-    {
-      if (this->m_header)
-      {
-        return this->add(description);
-      }
-      auto ret = formator::append_string(this->m_pos, this->m_end, value);
+      auto ret = format::append(this->m_pos, this->m_end, value, description.get_format());
       if (ret.ec != std::errc())
       {
         throw logginator::errors::line_serialization_error();
       }
-      ret = formator::append_string(ret.ptr, this->m_end, ";");
+      ret = format::append_string(ret.ptr, this->m_end, ";");
       if (ret.ec != std::errc())
       {
         throw logginator::errors::line_serialization_error();
@@ -258,12 +191,12 @@ namespace logginator
     }
 
   private:
-    void add(column_description_int description);
-    void add(column_description_float description);
-    void add(column_description_binary description);
-    void add(column_description_string description);
+    void add(ColumnDescriptionInt const& description) &;
+    void add(ColumnDescriptionFloat const& description) &;
+    void add(ColumnDescriptionBinary const& description) &;
+    void add(ColumnDescriptionString const& description) &;
 
-    void add(std::string_view name, std::string_view unit, std::string_view format);
+    void add(std::string_view name, std::string_view unit, std::string_view format) &;
 
     Channel_Interface::ChannelLock m_channel;
     bool                           m_header;
@@ -305,7 +238,7 @@ namespace logginator
 
     protected:
       using print_header_fnc = void (&)(line_t&);
-      Channel_Base(Manager_Interface& man, std::span<char> buffer, channel_description_t cfg, print_header_fnc fnc)
+      Channel_Base(Manager_Interface& man, std::span<char> buffer, ChannelDescription cfg, print_header_fnc fnc)
           : m_man(man)
           , m_default_msg(fnc)
           , m_cfg(cfg)
@@ -313,21 +246,21 @@ namespace logginator
       {
       }
 
-      channel_description_t const& get_cfg() const override { return this->m_cfg; }
+      ChannelDescription const& get_cfg() const& override { return this->m_cfg; }
 
-      void print_header() override
+      void print_header() & override
       {
         auto line = this->request_line(true);
         this->m_default_msg(line);
       }
 
-      void setup(uint32_t downsample_factor) override
+      void setup(uint32_t downsample_factor) & override
       {
         this->m_downsample_trg = downsample_factor;
         this->m_downsample_cnt = downsample_factor;
       }
 
-      void publish(bool is_header, std::string_view msg) override { this->p_publish(is_header, msg); }
+      void publish(bool is_header, std::string_view msg) & override { this->p_publish(is_header, msg); }
 
       line_t request_line(bool is_header) { return line_t{ *this, this->m_buffer, is_header }; };
 
@@ -357,22 +290,22 @@ namespace logginator
         this->m_man.publish(msg);
       }
 
-      void lock_buffer() override { this->m_man.lock_buffer(); };
-      void unlock_buffer() override { this->m_man.unlock_buffer(); };
+      void lock_buffer() & override { this->m_man.lock_buffer(); };
+      void unlock_buffer() & override { this->m_man.unlock_buffer(); };
 
     protected:
-      Manager_Interface&          m_man;
-      print_header_fnc            m_default_msg;
-      channel_description_t const m_cfg;
-      std::span<char>             m_buffer         = {};
-      uint32_t                    m_downsample_trg = 0;
-      uint32_t                    m_downsample_cnt = 0;
+      Manager_Interface&       m_man;
+      print_header_fnc         m_default_msg;
+      ChannelDescription const m_cfg;
+      std::span<char>          m_buffer         = {};
+      uint32_t                 m_downsample_trg = 0;
+      uint32_t                 m_downsample_cnt = 0;
     };
 
     template <typename T> class Channel final: public Channel_Base
     {
     public:
-      Channel(Manager_Interface& man, channel_description_t const& cfg, std::span<char> buffer)
+      Channel(Manager_Interface& man, ChannelDescription const& cfg, std::span<char> buffer)
           : Channel_Base(man, buffer, cfg, print_column_description)
       {
         man.subscribe(*this);
@@ -401,7 +334,7 @@ namespace logginator
     virtual void print_channels()                                           = 0;
     virtual void setup_channel(uint8_t channel, uint32_t downsample_factor) = 0;
 
-    template <typename T> Channel<T> request_channel(T const&, channel_description_t const& cfg) { return Channel<T>{ *this, cfg, this->m_buffer }; }
+    template <typename T> Channel<T> request_channel(T const&, ChannelDescription const& cfg) { return Channel<T>{ *this, cfg, this->m_buffer }; }
 
   protected:
     virtual void publish(std::string_view msg) noexcept  = 0;

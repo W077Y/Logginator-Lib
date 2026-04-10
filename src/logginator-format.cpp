@@ -1,9 +1,10 @@
-#include "logginator-formator.hpp"
+#include "logginator-format.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
-namespace logginator::formator
+namespace logginator::format
 {
   namespace
   {
@@ -91,4 +92,28 @@ namespace logginator::formator
     std::fill_n(pos, count, c);
     return { .ptr = pos + count, .ec = std::errc() };
   }
-}    // namespace logginator::formator
+
+  std::to_chars_result append(char* pos, char* end, std::span<std::byte const> value, BinaryFormat fmt)
+  {
+    switch (fmt)
+    {
+    case BinaryFormat::b64:
+      return format::append_base64(pos, end, value);
+    default:
+      return format::append_base64(pos, end, value);
+    }
+  }
+
+  std::to_chars_result append(char* pos, char* end, std::string_view value, StringFormat fmt)
+  {
+    switch (fmt)
+    {
+    case StringFormat::b64:
+      return format::append_base64(pos, end, std::span<std::byte const>(reinterpret_cast<std::byte const*>(value.data()), value.size()));
+    case StringFormat::ascii:
+    default:
+      return format::append_string(pos, end, value);
+    }
+  }
+
+}    // namespace logginator::format

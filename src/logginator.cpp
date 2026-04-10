@@ -5,11 +5,11 @@ namespace logginator
 {
   namespace
   {
-    constexpr std::string_view to_string_view(logginator::column_description_int::Format fmt)
+    constexpr std::string_view to_string_view(ColumnDescriptionInt::Format const& fmt)
     {
       switch (fmt)
       {
-        using enum logginator::column_description_int::Format;
+        using enum ColumnDescriptionInt::Format;
       case hex:
         return "int_hex";
       case b64:
@@ -22,11 +22,11 @@ namespace logginator
       return "int_ascii";
     }
 
-    constexpr std::string_view to_string_view(logginator::column_description_float::Format fmt)
+    constexpr std::string_view to_string_view(ColumnDescriptionFloat::Format const& fmt)
     {
       switch (fmt)
       {
-        using enum logginator::column_description_float::Format;
+        using enum ColumnDescriptionFloat::Format;
       case ascii_fixed:
         return "float_fixed";
       case ascii_scientific:
@@ -43,11 +43,11 @@ namespace logginator
       return "float_ascii";
     }
 
-    constexpr std::string_view to_string_view(logginator::column_description_binary::Format fmt)
+    constexpr std::string_view to_string_view(ColumnDescriptionBinary::Format const& fmt)
     {
       switch (fmt)
       {
-        using enum logginator::column_description_binary::Format;
+        using enum ColumnDescriptionBinary::Format;
       case b64:
         return "binary_b64";
 
@@ -57,11 +57,11 @@ namespace logginator
       return "binary_b64";
     }
 
-    constexpr std::string_view to_string_view(logginator::column_description_string::Format fmt)
+    constexpr std::string_view to_string_view(ColumnDescriptionString::Format const& fmt)
     {
       switch (fmt)
       {
-        using enum logginator::column_description_string::Format;
+        using enum ColumnDescriptionString::Format;
       case ascii:
         return "string_ascii";
 
@@ -73,7 +73,7 @@ namespace logginator
 
     constexpr std::to_chars_result append_channel_number(char* pos, char* end, uint8_t channel_number, std::string_view channel_name)
     {
-      auto ret = formator::append_string(pos, end, "#");
+      auto ret = format::append_string(pos, end, "#");
       if (ret.ec != std::errc())
       {
         return ret;
@@ -90,18 +90,18 @@ namespace logginator
       }
       if (!channel_name.empty())
       {
-        ret = formator::append_string(ret.ptr, end, ":");
+        ret = format::append_string(ret.ptr, end, ":");
         if (ret.ec != std::errc())
         {
           return ret;
         }
-        ret = formator::append_string(ret.ptr, end, channel_name);
+        ret = format::append_string(ret.ptr, end, channel_name);
         if (ret.ec != std::errc())
         {
           return ret;
         }
       }
-      ret = logginator::formator::append_string(ret.ptr, end, ";");
+      ret = logginator::format::append_string(ret.ptr, end, ";");
       if (ret.ec != std::errc())
       {
         return ret;
@@ -144,39 +144,39 @@ namespace logginator
     this->m_channel.channel.publish(this->m_header, msg);
   }
 
-  void line_t::add(std::string_view name, std::string_view unit, std::string_view format)
+  void line_t::add(std::string_view name, std::string_view unit, std::string_view format) &
   {
-    auto ret = logginator::formator::append_string(this->m_pos, this->m_end, name);
+    auto ret = logginator::format::append_string(this->m_pos, this->m_end, name);
     if (ret.ec != std::errc())
     {
       throw logginator::errors::line_serialization_error();
     }
 
-    ret = logginator::formator::append_string(ret.ptr, this->m_end, "[");
+    ret = logginator::format::append_string(ret.ptr, this->m_end, "[");
     if (ret.ec != std::errc())
     {
       throw logginator::errors::line_serialization_error();
     }
 
-    ret = logginator::formator::append_string(ret.ptr, this->m_end, unit);
+    ret = logginator::format::append_string(ret.ptr, this->m_end, unit);
     if (ret.ec != std::errc())
     {
       throw logginator::errors::line_serialization_error();
     }
 
-    ret = logginator::formator::append_string(ret.ptr, this->m_end, "]{");
+    ret = logginator::format::append_string(ret.ptr, this->m_end, "]{");
     if (ret.ec != std::errc())
     {
       throw logginator::errors::line_serialization_error();
     }
 
-    ret = logginator::formator::append_string(ret.ptr, this->m_end, format);
+    ret = logginator::format::append_string(ret.ptr, this->m_end, format);
     if (ret.ec != std::errc())
     {
       throw logginator::errors::line_serialization_error();
     }
 
-    ret = logginator::formator::append_string(ret.ptr, this->m_end, "};");
+    ret = logginator::format::append_string(ret.ptr, this->m_end, "};");
     if (ret.ec != std::errc())
     {
       throw logginator::errors::line_serialization_error();
@@ -185,22 +185,22 @@ namespace logginator
     this->m_pos = ret.ptr;
   }
 
-  void line_t::add(column_description_int description)
+  void line_t::add(ColumnDescriptionInt const& description) &
   {
     return this->add(description.get_name(), description.get_unit(), to_string_view(description.get_format()));
   }
 
-  void line_t::add(column_description_float description)
+  void line_t::add(ColumnDescriptionFloat const& description) &
   {
     return this->add(description.get_name(), description.get_unit(), to_string_view(description.get_format()));
   }
 
-  void line_t::add(column_description_binary description)
+  void line_t::add(ColumnDescriptionBinary const& description) &
   {
     return this->add(description.get_name(), description.get_unit(), to_string_view(description.get_format()));
   }
 
-  void line_t::add(column_description_string description)
+  void line_t::add(ColumnDescriptionString const& description) &
   {
     return this->add(description.get_name(), description.get_unit(), to_string_view(description.get_format()));
   }
