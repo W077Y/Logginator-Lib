@@ -35,8 +35,8 @@ Logginator provides deterministic, thread-safe telemetry output with compile-tim
 
 **Example:**
 ```
-#42;temperature[°C]{ascii_fixed};23.50
-#42;pressure[Pa]{hex};0x1a2b3c4d
+#42;temperature[°C]{ascii_fixed};pressure[Pa]{hex}
+#42;23.50;0x1a2b3c4d
 ```
 
 ## Getting Started
@@ -62,22 +62,19 @@ namespace my_app {
   // Print a single measurement into the log line
   void print(SensorData const& data, logginator::line_t& line) {
     using namespace logginator;
-    using FI = column_description_int::Format;
-    using FF = column_description_float::Format;
+    using FI = ColumnDescriptionInt::Format;
+    using FF = ColumnDescriptionFloat::Format;
     
-    line.add(column_description_int{"time", "ms", FI::ascii}, data.timestamp);
-    line.add(column_description_float{"temp", "°C", FF::ascii_fixed}, data.temperature);
-    line.add(column_description_float{"humidity", "%", FF::ascii_fixed}, data.humidity);
+    line.add(ColumnDescriptionInt{"time", "ms", FI::ascii}, data.timestamp);
+    line.add(ColumnDescriptionFloat{"temp", "°C", FF::ascii_fixed}, data.temperature);
+    line.add(ColumnDescriptionFloat{"humidity", "%", FF::ascii_fixed}, data.humidity);
   }
 
   // Request a new log line
-  logginator::line_t request_line(SensorData const&) {
-    static logginator::Manager<std::mutex, 512>& manager = get_manager();
-    static auto channel = logginator::channel_description_t{
-      .ID = 1,
-      .name = "sensors"
-    };
-    return manager.request_line(channel, false);
+  logginator::line_t request_line(SensorData const& value) {
+    using namespace logginator;
+    static auto obj = request_manager().request_channel(value, logginator::ChannelDescription{ 1, "sensors" });
+    return obj.request_line();
   }
 }
 ```
@@ -89,14 +86,17 @@ Implement the output backend:
 ```cpp
 #include <iostream>
 
-struct ConsoleOutput : logginator::Manager_Interface::Output_Interface {
-  void operator()(std::string_view msg) noexcept override {
-    std::cout << msg << "\n";
-  }
-};
+logginator::Manager_Interface & request_manager(){
+  struct ConsoleOutput : logginator::Manager_Interface::Output_Interface {
+    void operator()(std::string_view msg) noexcept override {
+      std::cout << msg << "\n";
+    }
+  };
 
-ConsoleOutput output;
-logginator::Manager<std::mutex, 4096> manager{output};
+  static ConsoleOutput output;
+  static logginator::Manager<std::mutex, 4096> manager{output};
+  return manager;
+}
 ```
 
 ### 4. Log Your Data
@@ -129,7 +129,8 @@ logginator::print(data);  // Publishes automatically on scope exit
 - `b64` — Base64 (only option)
 
 ### String Formats
-- `ascii` — Raw UTF-8 (only option)
+- `ascii` — Raw UTF-8
+- `b64` — Base64
 
 ## Configuration
 
@@ -182,48 +183,6 @@ std::thread t3([&]{ mgr.setup_channel(1, 5); });
 t1.join(); t2.join(); t3.join();
 ```
 
-## Design Rationale
-
-### RAII Publishing
-
-Log lines cannot be partially published:
-
-```cpp
-{
-  auto line = request_line();
-  line.add("temp", "°C", "float", 22.5);
-  line.add("pressure", "Pa", "int", 101325);
-  // Destructor publishes complete line automatically
-}
-```
-
-### ADL-Based Customization
-
-No template specialization needed. Just define in your namespace:
-
-```cpp
-namespace my_types {
-  void print(MyType const&, logginator::line_t&) { /* your code */ }
-  logginator::line_t request_line(MyType const&) { /* your code */ }
-}
-
-// Library finds them via ADL
-logginator::print(my_types::value);  // ✓ Works!
-```
-
-### Compile-Time Safety
-
-```cpp
-// ✓ OK — matches concept
-line.add(column_description_int{...}, int64_t{42});
-
-// ✗ Compile Error — bool not allowed
-line.add(column_description_int{...}, bool{true});
-
-// ✓ OK — bool has separate overload
-line.add(column_description_int{...}, true);
-```
-
 ## Limitations & Constraints
 
 ⚠️ **No Dynamic Allocation** — Buffer sizes must be configured at compile-time  
@@ -268,9 +227,9 @@ namespace telemetry {
     line.add({"az", "m/s²", "ascii"}, a.az);
   }
 
-  logginator::line_t request_line(Acceleration const&) {
-    static auto& mgr = get_manager();
-    return mgr.request_line({10, "accel"}, false);
+  logginator::line_t request_line(Acceleration const& x) {
+    static auto& ch = get_manager().request_channel(x, ChannelDescription{ 10, "accel" });
+    return ch.request_line();
   }
 
   // ...same for Gyroscope on channel 11
