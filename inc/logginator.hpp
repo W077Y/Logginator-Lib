@@ -138,7 +138,7 @@ namespace logginator
       {
         throw logginator::errors::line_serialization_error();
       }
-      ret = format::append_string(ret.ptr, this->m_end, ";");
+      ret = format::append(ret.ptr, this->m_end, ";", format::StringFormat::ascii);
       if (ret.ec != std::errc())
       {
         throw logginator::errors::line_serialization_error();
@@ -146,11 +146,14 @@ namespace logginator
       this->m_pos = ret.ptr;
     }
 
-    void add(ColumnDescriptionInt description, bool const& value) & { return this->add(description, static_cast<char>(value)); }
+    void add(ColumnDescriptionInt const& description, bool const& value) & { return this->add(description, static_cast<char>(value)); }
 
     void add(ColumnDescriptionBinary const& description, std::byte const& value) & { return this->add(description, std::span<std::byte const>{ &value, 1 }); }
 
-    void add(ColumnDescriptionBinary const& description, std::span<std::byte const> const& value) &
+    template <typename D, typename T>
+      requires(std::same_as<D, ColumnDescriptionBinary> && std::convertible_to<T, std::span<std::byte const>>) ||
+              (std::same_as<D, ColumnDescriptionString> && std::convertible_to<T, std::string_view>)
+    void add(D const& description, T value) &
     {
       if (this->m_header)
       {
@@ -162,27 +165,8 @@ namespace logginator
       {
         throw logginator::errors::line_serialization_error();
       }
-      ret = format::append_string(ret.ptr, this->m_end, ";");
-      if (ret.ec != std::errc())
-      {
-        throw logginator::errors::line_serialization_error();
-      }
-      this->m_pos = ret.ptr;
-    }
 
-    void add(ColumnDescriptionString const& description, std::string_view value) &
-    {
-      if (this->m_header)
-      {
-        return this->add(description);
-      }
-
-      auto ret = format::append(this->m_pos, this->m_end, value, description.get_format());
-      if (ret.ec != std::errc())
-      {
-        throw logginator::errors::line_serialization_error();
-      }
-      ret = format::append_string(ret.ptr, this->m_end, ";");
+      ret = format::append(ret.ptr, this->m_end, ";", format::StringFormat::ascii);
       if (ret.ec != std::errc())
       {
         throw logginator::errors::line_serialization_error();
@@ -398,12 +382,10 @@ namespace logginator
       auto&           ent = this->m_list.at(channel.get_cfg().ID);
       if (ent != nullptr)
       {
-        this->unlock_list();
         throw logginator::errors::channel_subscribtion_error();
       }
 
       ent = &channel;
-      this->unlock_list();
     }
 
     void unsubscribe(Channel_Interface& channel) override
