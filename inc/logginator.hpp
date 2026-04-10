@@ -27,15 +27,15 @@ namespace logginator
     {
     }
 
-    uint8_t     ID;
-    char const* name;
+    uint8_t                ID;
+    std::string_view const name;
   };
 
   class column_description_t
   {
   public:
-    char const* get_name() const noexcept { return this->name; }
-    char const* get_unit() const noexcept { return this->unit; }
+    std::string_view get_name() const noexcept { return this->name; }
+    std::string_view get_unit() const noexcept { return this->unit; }
 
   protected:
     consteval column_description_t(char const* name, char const* unit)
@@ -44,8 +44,8 @@ namespace logginator
     {
     }
 
-    char const* name;
-    char const* unit;
+    std::string_view const name;
+    std::string_view const unit;
   };
 
   class column_description_int final: public column_description_t
@@ -135,6 +135,27 @@ namespace logginator
 
     virtual void print_header()                    = 0;
     virtual void setup(uint32_t downsample_factor) = 0;
+
+    virtual void lock_buffer()   = 0;
+    virtual void unlock_buffer() = 0;
+
+    struct ChannelLock
+    {
+      ChannelLock(Channel_Interface& ch)
+          : channel(ch)
+      {
+        this->channel.lock_buffer();
+      }
+
+      ChannelLock(ChannelLock const&)            = delete;
+      ChannelLock(ChannelLock&&)                 = delete;
+      ChannelLock& operator=(ChannelLock const&) = delete;
+      ChannelLock& operator=(ChannelLock&&)      = delete;
+
+      ~ChannelLock() { this->channel.unlock_buffer(); }
+
+      Channel_Interface& channel;
+    };
   };
 
   class line_t
@@ -149,7 +170,7 @@ namespace logginator
 
     ~line_t();
 
-    channel_description_t const& get_cfg() const { return this->m_channel.get_cfg(); }
+    channel_description_t const& get_cfg() const { return this->m_channel.channel.get_cfg(); }
 
     template <typename T>
       requires(std::integral<T> && !std::same_as<T, bool>)
@@ -244,19 +265,25 @@ namespace logginator
 
     void add(std::string_view name, std::string_view unit, std::string_view format);
 
-    Channel_Interface& m_channel;
-    bool               m_header;
-    char*              m_begin;
-    char*              m_pos;
-    char* const        m_end;
+    Channel_Interface::ChannelLock m_channel;
+    bool                           m_header;
+    char*                          m_begin;
+    char*                          m_pos;
+    char* const                    m_end;
   };
 
   namespace detail
   {
-    template <typename T> void adl_print(T const& value, line_t& line) { return print(value, line); }
+    // ADL Forwarding: These calls will find user-provided implementations
+    // via Argument-Dependent Lookup based on the template parameter T
+    template <typename T> void adl_print(T const& value, line_t& line) { return print(value, line); }    // Looks for: my_app::print via ADL
 
     template <typename T> line_t adl_request_line(T const& value) { return request_line(value); }
   }    // namespace detail
+
+  template <typename T> void   print(T const& value, line_t& line);    // Declaration only!
+  template <typename T> line_t request_line(T const& value);
+  // NO bodies here - users provide these in their namespace and they will be found via ADL
 
   template <typename T>
     requires std::destructible<T> && std::default_initializable<T> && requires(const T& value, line_t& line) {
@@ -300,17 +327,9 @@ namespace logginator
         this->m_downsample_cnt = downsample_factor;
       }
 
-      void publish(bool is_header, std::string_view msg) override
-      {
-        this->p_publish(is_header, msg);
-        this->m_man.unlock_buffer();
-      }
+      void publish(bool is_header, std::string_view msg) override { this->p_publish(is_header, msg); }
 
-      line_t request_line(bool is_header)
-      {
-        this->m_man.lock_buffer();
-        return line_t{ *this, this->m_buffer, is_header };
-      };
+      line_t request_line(bool is_header) { return line_t{ *this, this->m_buffer, is_header }; };
 
     private:
       void p_publish(bool is_header, std::string_view msg)
@@ -337,6 +356,9 @@ namespace logginator
 
         this->m_man.publish(msg);
       }
+
+      void lock_buffer() override { this->m_man.lock_buffer(); };
+      void unlock_buffer() override { this->m_man.unlock_buffer(); };
 
     protected:
       Manager_Interface&          m_man;
@@ -403,11 +425,29 @@ namespace logginator
   private:
     static constexpr std::size_t max_number_of_channels = std::numeric_limits<uint8_t>::max() + 1;
 
+    struct list_lock_guard
+    {
+      list_lock_guard(Manager_Base& man)
+          : m_man(man)
+      {
+        this->m_man.lock_list();
+      }
+
+      list_lock_guard(list_lock_guard const&)            = delete;
+      list_lock_guard(list_lock_guard&&)                 = delete;
+      list_lock_guard& operator=(list_lock_guard const&) = delete;
+      list_lock_guard& operator=(list_lock_guard&&)      = delete;
+
+      ~list_lock_guard() { this->m_man.unlock_list(); }
+
+      Manager_Base& m_man;
+    };
+
     void publish(std::string_view msg) noexcept override { return this->m_out(msg); }
 
     void print_channels() override
     {
-      this->lock_list();
+      list_lock_guard lock(*this);
       for (auto& ent : this->m_list)
       {
         if (ent == nullptr)
@@ -417,15 +457,15 @@ namespace logginator
 
         ent->print_header();
       }
-      this->unlock_list();
     }
 
     void subscribe(Channel_Interface& channel) override
     {
-      this->lock_list();
-      auto& ent = this->m_list.at(channel.get_cfg().ID);
+      list_lock_guard lock(*this);
+      auto&           ent = this->m_list.at(channel.get_cfg().ID);
       if (ent != nullptr)
       {
+        this->unlock_list();
         throw logginator::errors::channel_subscribtion_error();
       }
 
@@ -435,28 +475,26 @@ namespace logginator
 
     void unsubscribe(Channel_Interface& channel) override
     {
-      this->lock_list();
-      auto& ent = this->m_list.at(channel.get_cfg().ID);
+      list_lock_guard lock(*this);
+      auto&           ent = this->m_list.at(channel.get_cfg().ID);
       if (ent != &channel)
       {
         throw logginator::errors::channel_subscribtion_error();
       }
 
       ent = nullptr;
-      this->unlock_list();
     }
 
     void setup_channel(uint8_t channel, uint32_t downsample_factor) override
     {
-      this->lock_list();
-      auto& ent = this->m_list.at(channel);
+      list_lock_guard lock(*this);
+      auto&           ent = this->m_list.at(channel);
       if (ent == nullptr)
       {
         throw logginator::errors::channel_setup_error();
       }
 
       ent->setup(downsample_factor);
-      this->unlock_list();
     }
 
     virtual void lock_list()   = 0;

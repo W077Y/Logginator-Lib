@@ -118,12 +118,12 @@ namespace logginator
       , m_pos(this->m_begin)
       , m_end(buffer.data() + buffer.size())
   {
-    auto ret = append_channel_number(this->m_begin, this->m_end,      //
-                                     this->m_channel.get_cfg().ID,    //
-                                     this->m_header ? this->m_channel.get_cfg().name : std::string_view{});
+    auto ret = append_channel_number(this->m_begin, this->m_end,              //
+                                     this->m_channel.channel.get_cfg().ID,    //
+                                     this->m_header ? this->m_channel.channel.get_cfg().name : std::string_view{});
     if (ret.ec != std::errc())
     {
-      throw std::exception();
+      throw logginator::errors::line_serialization_error();
     }
     this->m_pos = ret.ptr;
   }
@@ -134,7 +134,14 @@ namespace logginator
     {
       *(this->m_pos - 1) = '\n';
     }
-    this->m_channel.publish(this->m_header, std::string_view{ this->m_begin, this->m_pos });
+
+    auto msg = std::string_view{ this->m_begin, this->m_pos };
+    if (msg.length() < 5)    // "#XX\n" empty message, don't publish
+    {
+      return;
+    }
+
+    this->m_channel.channel.publish(this->m_header, msg);
   }
 
   void line_t::add(std::string_view name, std::string_view unit, std::string_view format)
