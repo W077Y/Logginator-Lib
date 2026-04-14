@@ -10,6 +10,7 @@
 #include <logginator-format.hpp>
 #include <span>
 #include <string_view>
+#include <utility>
 
 namespace logginator
 {
@@ -19,8 +20,17 @@ namespace logginator
   class Channel_Interface;
   class line_t;
 
+  template <typename T>
+  concept channel_id_t = std::is_enum_v<T> && std::is_same_v<std::underlying_type_t<T>, uint8_t>;
+
   struct ChannelDescription
   {
+    template <typename T> requires channel_id_t<T>
+    consteval ChannelDescription(T id, std::string_view name)
+        : ChannelDescription(std::to_underlying(id), name)
+    {
+    }
+
     consteval ChannelDescription(uint8_t id, std::string_view name)
         : ID{ id }
         , name{ name }
@@ -317,6 +327,12 @@ namespace logginator
 
     virtual void print_channels()                                           = 0;
     virtual void setup_channel(uint8_t channel, uint32_t downsample_factor) = 0;
+    
+    template <typename T> requires channel_id_t<T>
+    void setup_channel(T channel, uint32_t downsample_factor)
+    {
+      setup_channel(std::to_underlying(channel), downsample_factor);
+    }
 
     template <typename T> Channel<T> request_channel(T const&, ChannelDescription const& cfg) { return Channel<T>{ *this, cfg, this->m_buffer }; }
 
