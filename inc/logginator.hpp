@@ -21,11 +21,11 @@ namespace logginator
   class line_t;
 
   template <typename T>
-  concept channel_id_t = std::is_enum_v<T> && std::is_same_v<std::underlying_type_t<T>, uint8_t>;
+  concept ChannelID = std::is_enum_v<T> && std::is_same_v<std::underlying_type_t<T>, uint8_t>;
 
   struct ChannelDescription
   {
-    template <typename T> requires channel_id_t<T>
+    template <ChannelID T>
     consteval ChannelDescription(T id, std::string_view name)
         : ChannelDescription(std::to_underlying(id), name)
     {
@@ -328,7 +328,7 @@ namespace logginator
     virtual void print_channels()                                           = 0;
     virtual void setup_channel(uint8_t channel, uint32_t downsample_factor) = 0;
     
-    template <typename T> requires channel_id_t<T>
+    template <ChannelID T>
     void setup_channel(T channel, uint32_t downsample_factor)
     {
       setup_channel(std::to_underlying(channel), downsample_factor);
