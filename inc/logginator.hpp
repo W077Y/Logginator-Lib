@@ -78,6 +78,55 @@ namespace logginator
     private:
       Format const fmt;
     };
+
+    class downsampler_t
+    {
+    public:
+      using counting_type = uint8_t;
+
+      downsampler_t() = default;
+      downsampler_t(counting_type target)
+          : m_trg(target)
+      {
+      }
+
+      bool is_ready() const
+      {
+        if (this->m_trg == 0)
+          return false;
+
+        if (this->m_cnt != 0)
+          return false;
+
+        return true;
+      }
+
+      void tick()
+      {
+        ++this->m_cnt;
+        if (this->m_cnt >= this->m_trg)
+        {
+          this->m_cnt = 0;
+        }
+      }
+
+      bool poll()
+      {
+        auto ret = this->is_ready();
+        this->tick();
+        return ret;
+      }
+
+      void set_trg(counting_type target)
+      {
+        this->m_trg = target;
+        this->m_cnt = 0;
+      }
+
+    private:
+      counting_type m_trg = 0;
+      counting_type m_cnt = 0;
+    };
   }    // namespace detail
 
   using ColumnDescriptionInt    = detail::column_description_format<format::IntegerFormat>;
@@ -85,38 +134,36 @@ namespace logginator
   using ColumnDescriptionBinary = detail::column_description_format<format::BinaryFormat>;
   using ColumnDescriptionString = detail::column_description_format<format::StringFormat>;
 
-  class Channel_Interface
+  class Lockable_Publisher_Interface
   {
   public:
-    virtual ~Channel_Interface() = default;
+    virtual ~Lockable_Publisher_Interface() = default;
 
-  protected:
-    friend line_t;
-    friend Manager_Base;
+    virtual void lock()   = 0;
+    virtual void unlock() = 0;
 
-    virtual ChannelDescription const& get_cfg() const&                             = 0;
-    virtual void                      publish(bool header, std::string_view msg) & = 0;
-    virtual void                      print_header() &                             = 0;
-    virtual void                      setup(uint32_t downsample_factor) &          = 0;
-    virtual void                      lock_buffer() &                              = 0;
-    virtual void                      unlock_buffer() &                            = 0;
+    virtual void publish(std::string_view msg) = 0;
 
-    struct ChannelLock
+    class PublisherLock
     {
-      ChannelLock(Channel_Interface& ch)
-          : channel(ch)
+    public:
+      PublisherLock(Lockable_Publisher_Interface& pub)
+          : m_pub(pub)
       {
-        this->channel.lock_buffer();
+        this->m_pub.lock();
       }
 
-      ChannelLock(ChannelLock const&)            = delete;
-      ChannelLock(ChannelLock&&)                 = delete;
-      ChannelLock& operator=(ChannelLock const&) = delete;
-      ChannelLock& operator=(ChannelLock&&)      = delete;
+      PublisherLock(PublisherLock const&)            = delete;
+      PublisherLock(PublisherLock&&)                 = delete;
+      PublisherLock& operator=(PublisherLock const&) = delete;
+      PublisherLock& operator=(PublisherLock&&)      = delete;
 
-      ~ChannelLock() { this->channel.unlock_buffer(); }
+      ~PublisherLock() { this->m_pub.unlock(); }
 
-      Channel_Interface& channel;
+      auto publish(std::string_view msg) { return this->m_pub.publish(msg); }
+
+    private:
+      Lockable_Publisher_Interface& m_pub;
     };
   };
 
@@ -128,10 +175,14 @@ namespace logginator
     line_t& operator=(line_t const&) = delete;
     line_t& operator=(line_t&&)      = delete;
 
-    line_t(Channel_Interface& channel, std::span<char> buffer, bool print_header);
-    ~line_t();
+    line_t(Lockable_Publisher_Interface& publisher,       //
+           uint8_t                       id,              //
+           std::string_view              name,            //
+           std::span<char>               buffer,          //
+           bool                          print_header,    //
+           detail::downsampler_t&        downsampler);
 
-    ChannelDescription const& get_cfg() const& { return this->m_channel.channel.get_cfg(); }
+    ~line_t();
 
     template <typename D, typename T>
       requires((std::same_as<D, ColumnDescriptionInt> && std::integral<T> && !std::same_as<T, bool>) ||
@@ -192,11 +243,50 @@ namespace logginator
 
     void add(std::string_view name, std::string_view unit, std::string_view format) &;
 
-    Channel_Interface::ChannelLock m_channel;
-    bool                           m_header;
-    char*                          m_begin;
-    char*                          m_pos;
-    char* const                    m_end;
+    Lockable_Publisher_Interface::PublisherLock m_pub;
+    bool                                        m_header;
+    bool                                        m_publish;
+    char*                                       m_begin;
+    char*                                       m_pos;
+    char* const                                 m_end;
+  };
+
+  class Channel_Interface: protected Lockable_Publisher_Interface
+  {
+  public:
+    using print_header_fnc = void (&)(line_t&);
+    using counting_type    = detail::downsampler_t::counting_type;
+    Channel_Interface(ChannelDescription cfg, print_header_fnc header_fnc, counting_type downsample_factor)
+        : m_cfg(cfg)
+        , m_header_fnc(header_fnc)
+        , m_downsampler(downsample_factor)
+    {
+    }
+
+    Channel_Interface(Channel_Interface const&)            = delete;
+    Channel_Interface(Channel_Interface&&)                 = delete;
+    Channel_Interface& operator=(Channel_Interface const&) = delete;
+    Channel_Interface& operator=(Channel_Interface&&)      = delete;
+
+    virtual ~Channel_Interface() = default;
+
+    line_t request_line() & { return this->request_line(false); }
+    void   print_header() &
+    {
+      auto line = this->request_line(true);
+      this->m_header_fnc(line);
+    }
+    void                      setup(counting_type downsample_factor) & { return this->m_downsampler.set_trg(downsample_factor); }
+    ChannelDescription const& get_cfg() const& { return this->m_cfg; }
+
+  protected:
+    template <typename T> static void print_column_description(line_t& line) { return print(T{}, line); };
+
+    virtual line_t request_line(bool header) & = 0;
+
+    ChannelDescription const m_cfg;
+    print_header_fnc const   m_header_fnc;
+    detail::downsampler_t    m_downsampler = {};
   };
 
   namespace detail
@@ -225,93 +315,37 @@ namespace logginator
 
   class Manager_Interface
   {
-    class Channel_Base: public Channel_Interface
+    class Channel final: public Channel_Interface
     {
     public:
-      line_t request_line() { return request_line(false); }
+      using Channel_Interface::request_line;
 
-    protected:
-      using print_header_fnc = void (&)(line_t&);
-      Channel_Base(Manager_Interface& man, std::span<char> buffer, ChannelDescription cfg, print_header_fnc fnc)
-          : m_man(man)
-          , m_default_msg(fnc)
-          , m_cfg(cfg)
+      template <typename T>
+      Channel(Manager_Interface& man, std::span<char> buffer, ChannelDescription cfg, T const&, counting_type downsample_factor)
+          : Channel_Interface(cfg, Channel_Interface::print_column_description<T>, downsample_factor)
+          , m_man(man)
           , m_buffer(buffer)
       {
+        this->m_man.subscribe(*this);
       }
-
-      ChannelDescription const& get_cfg() const& override { return this->m_cfg; }
-
-      void print_header() & override
-      {
-        auto line = this->request_line(true);
-        this->m_default_msg(line);
-      }
-
-      void setup(uint32_t downsample_factor) & override
-      {
-        this->m_downsample_trg = downsample_factor;
-        this->m_downsample_cnt = downsample_factor;
-      }
-
-      void publish(bool is_header, std::string_view msg) & override { this->p_publish(is_header, msg); }
-
-      line_t request_line(bool is_header) { return line_t{ *this, this->m_buffer, is_header }; };
-
-    private:
-      void p_publish(bool is_header, std::string_view msg)
-      {
-        if (is_header)
-        {
-          return this->m_man.publish(msg);
-        }
-
-        if (this->m_downsample_trg == 0)
-        {
-          return;
-        }
-
-        if (++this->m_downsample_cnt >= this->m_downsample_trg)
-        {
-          this->m_downsample_cnt = 0;
-        }
-
-        if (this->m_downsample_cnt != 0)
-        {
-          return;
-        }
-
-        this->m_man.publish(msg);
-      }
-
-      void lock_buffer() & override { this->m_man.lock_buffer(); };
-      void unlock_buffer() & override { this->m_man.unlock_buffer(); };
-
-    protected:
-      Manager_Interface&       m_man;
-      print_header_fnc         m_default_msg;
-      ChannelDescription const m_cfg;
-      std::span<char>          m_buffer         = {};
-      uint32_t                 m_downsample_trg = 0;
-      uint32_t                 m_downsample_cnt = 0;
-    };
-
-    template <typename T> class Channel final: public Channel_Base
-    {
-    public:
-      Channel(Manager_Interface& man, ChannelDescription const& cfg, std::span<char> buffer)
-          : Channel_Base(man, buffer, cfg, print_column_description)
-      {
-        man.subscribe(*this);
-      }
-
       ~Channel() { this->m_man.unsubscribe(*this); }
 
     private:
-      static void print_column_description(line_t& line) { return print(T{}, line); };
+      void   publish(std::string_view msg) override { this->m_man.publish(msg); }
+      line_t request_line(bool is_header) & override
+      {
+        return line_t{ *this, this->m_cfg.ID, this->m_cfg.name, this->m_buffer, is_header, this->m_downsampler };
+      };
+      void lock() override { this->m_man.lock_buffer(); };
+      void unlock() override { this->m_man.unlock_buffer(); };
+
+      Manager_Interface& m_man;
+      std::span<char>    m_buffer = {};
     };
 
   public:
+    using counting_type = detail::downsampler_t::counting_type;
+
     class Output_Interface
     {
     public:
@@ -325,16 +359,15 @@ namespace logginator
 
     virtual ~Manager_Interface() = default;
 
-    virtual void print_channels()                                           = 0;
-    virtual void setup_channel(uint8_t channel, uint32_t downsample_factor) = 0;
-    
-    template <ChannelID T>
-    void setup_channel(T channel, uint32_t downsample_factor)
-    {
-      setup_channel(std::to_underlying(channel), downsample_factor);
-    }
+    virtual void print_channels()                                                = 0;
+    virtual void setup_channel(uint8_t channel, counting_type downsample_factor) = 0;
 
-    template <typename T> Channel<T> request_channel(T const&, ChannelDescription const& cfg) { return Channel<T>{ *this, cfg, this->m_buffer }; }
+    template <ChannelID T> void setup_channel(T channel, counting_type downsample_factor) { setup_channel(std::to_underlying(channel), downsample_factor); }
+
+    template <typename T> Channel request_channel(T const& val, ChannelDescription const& cfg, counting_type downsample_factor = 0)
+    {
+      return Channel{ *this, this->m_buffer, cfg, val, downsample_factor };
+    }
 
   protected:
     virtual void publish(std::string_view msg) noexcept  = 0;
@@ -416,7 +449,7 @@ namespace logginator
       ent = nullptr;
     }
 
-    void setup_channel(uint8_t channel, uint32_t downsample_factor) override
+    void setup_channel(uint8_t channel, counting_type downsample_factor) override
     {
       list_lock_guard lock(*this);
       auto&           ent = this->m_list.at(channel);

@@ -110,17 +110,22 @@ namespace logginator
     }
   }    // namespace
 
-  line_t::line_t(Channel_Interface& channel, std::span<char> buffer, bool print_header)
-
-      : m_channel(channel)
+  line_t::line_t(Lockable_Publisher_Interface& publisher,
+                 uint8_t                       id,
+                 std::string_view              name,
+                 std::span<char>               buffer,
+                 bool                          print_header,
+                 detail::downsampler_t&        downsampler)
+      : m_pub(publisher)
       , m_header(print_header)
+      , m_publish(print_header ? true : downsampler.poll())
       , m_begin(buffer.data())
       , m_pos(this->m_begin)
       , m_end(buffer.data() + buffer.size())
   {
-    auto ret = append_channel_number(this->m_begin, this->m_end,              //
-                                     this->m_channel.channel.get_cfg().ID,    //
-                                     this->m_header ? this->m_channel.channel.get_cfg().name : std::string_view{});
+    auto ret = append_channel_number(this->m_begin, this->m_end,    //
+                                     id,                            //
+                                     this->m_header ? name : std::string_view{});
     if (ret.ec != std::errc())
     {
       throw logginator::errors::line_serialization_error();
@@ -141,7 +146,12 @@ namespace logginator
       return;
     }
 
-    this->m_channel.channel.publish(this->m_header, msg);
+    if (!this->m_publish)
+    {
+      return;
+    }
+
+    this->m_pub.publish(msg);
   }
 
   void line_t::add(std::string_view name, std::string_view unit, std::string_view format) &
